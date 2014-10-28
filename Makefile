@@ -1,4 +1,5 @@
 bat: main.o 
+	rm -rf tmp
 	gcc -o parseTool main.c zipparser.c
 
 main.o : main.c zipparser.o
@@ -9,3 +10,7 @@ zipparser.o : zipparser.c
 
 clean: 
 	rm parseTool main.o
+	rm -rf tmp
+
+clear:
+	rm -rf tmp

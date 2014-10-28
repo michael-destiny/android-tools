@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 int 
-pulldexfromzip(char *fileName)
+pulldexfromzip(char *fileName, char *outputDir)
 {
 	/*
 	int fd = open(filename, O_RDONLY);
@@ -17,7 +17,7 @@ pulldexfromzip(char *fileName)
 		fprintf(stderr, "%s open error", filename);
 	}
 	*/
-	openZip(fileName);
+	openZip(fileName, outputDir);
 
 	return 0;
 }
@@ -26,17 +26,21 @@ void
 usage(void) {
 	fprintf(stderr, "reverse tool use error\n\n");
 	fprintf(stderr, "Usage:\n");
-	fprintf(stderr, "I don't know now...should be: tool xx.apk\n\n");
+	fprintf(stderr, "I don't know now...should be: tool xx.apk outputPath\n\n");
 }
 
 int
 main(int argc, char * argv[])
 {
-	if (argc < 2) {
+	if (argc < 3) {
 		usage();
 		return -1;
 	}
-	int code = pulldexfromzip(*(argv + argc -1));
+	int i;
+	for( i = 0; i < argc; i++) {
+		printf("argv[%d]: %s\n", i, argv[i]);
+	}
+	int code = pulldexfromzip(*(argv + argc -2), *(argv + argc -1));
 	//printf("test compile\n");
 	return 0;
 }

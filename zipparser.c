@@ -5,8 +5,9 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/stat.h>
 
-void openZip(const char *zipFileName) {
+void openZip(const char *zipFileName, const char *outputDir) {
 	//printf("start openZip\n");
 	
 	int result;
@@ -107,7 +108,7 @@ void openZip(const char *zipFileName) {
 		goto bail;
 	}
 	
-	mEOCD.mEntries = malloc(mEOCD.mTotalNumEntries * sizeof(CentralDirEntry));
+	mEOCD.mEntries = malloc(mEOCD.mTotalNumEntries * sizeof(ZipEntry));
 	if(NULL == mEOCD.mEntries) {
 		fprintf(stderr, "malloc mEOCD->mEntries fail\n");
 		goto bail;
@@ -130,49 +131,87 @@ void openZip(const char *zipFileName) {
 	*/
 	int j;
 	for (i = 0, j = 0; i < mEOCD.mTotalNumEntries; i++)  {
-		CentralDirEntry *entry = mEOCD.mEntries + i;
+		CentralDirEntry *cde = &((*(mEOCD.mEntries + i)).mCDE);
 		if(getLongLE(&buf[j]) != ZIP_CDE_SIGNATURE) {
 			fprintf(stderr, "read CentralDirEntry signature error.\n");
 			goto bail;
 		}
-		entry->mVersionMadeBy = getShortLE(buf + j + 0x04);
-		entry->mVersionToExtract = getShortLE(buf + j + 0x06);
-		entry->mGPBitFlag = getShortLE(buf + j + 0x08);
-		entry->mCompressionMethod = getShortLE(buf + j + 0x0a);
-		entry->mLastModFileTime = getShortLE(buf + j + 0x0c);
-		entry->mLastModFileDate = getShortLE(buf + j + 0x0e);
-		entry->mCRC32 = getLongLE(buf + j + 0x10);
-		entry->mCompressedSize = getLongLE(buf + j + 0x14);
-		entry->mUnCompressedSize = getLongLE(buf + j + 0x18);
-		entry->mFileNameLength = getShortLE(buf + j + 0x1c);
-		entry->mExtraFieldLength = getShortLE(buf + j + 0x1e);
-		entry->mFileCommentLength = getShortLE(buf + j + 0x20);
-		entry->mDiskNumberStart = getShortLE(buf + j + 0x22);
-		entry->mInternalAttrs = getShortLE(buf + j + 0x24);
-		entry->mExternalAttrs = getShortLE(buf + j + 0x26);
-		entry->mLocalHeaderRelOffset = getLongLE(buf + j + 0x2a);
+		cde->mVersionMadeBy = getShortLE(buf + j + 0x04);
+		cde->mVersionToExtract = getShortLE(buf + j + 0x06);
+		cde->mGPBitFlag = getShortLE(buf + j + 0x08);
+		cde->mCompressionMethod = getShortLE(buf + j + 0x0a);
+		cde->mLastModFileTime = getShortLE(buf + j + 0x0c);
+		cde->mLastModFileDate = getShortLE(buf + j + 0x0e);
+		cde->mCRC32 = getLongLE(buf + j + 0x10);
+		cde->mCompressedSize = getLongLE(buf + j + 0x14);
+		cde->mUnCompressedSize = getLongLE(buf + j + 0x18);
+		cde->mFileNameLength = getShortLE(buf + j + 0x1c);
+		cde->mExtraFieldLength = getShortLE(buf + j + 0x1e);
+		cde->mFileCommentLength = getShortLE(buf + j + 0x20);
+		cde->mDiskNumberStart = getShortLE(buf + j + 0x22);
+		cde->mInternalAttrs = getShortLE(buf + j + 0x24);
+		cde->mExternalAttrs = getShortLE(buf + j + 0x26);
+		cde->mLocalHeaderRelOffset = getLongLE(buf + j + 0x2a);
 		int offset = 0x2e;
-		if ( entry->mFileNameLength > 0) {
-			entry->mFileName = malloc(entry->mFileNameLength + 1);
-			memcpy(entry->mFileName, buf + j + offset, entry->mFileNameLength);
-			*(entry->mFileName + entry->mFileNameLength)= '\0';
-			offset += entry->mFileNameLength;
+		if ( cde->mFileNameLength > 0) {
+			cde->mFileName = malloc(cde->mFileNameLength + 1);
+			memcpy(cde->mFileName, buf + j + offset, cde->mFileNameLength);
+			*(cde->mFileName + cde->mFileNameLength)= '\0';
+			offset += cde->mFileNameLength;
 		}
-		if ( entry->mExtraFieldLength > 0) {
-			entry->mExtraField = malloc(entry->mExtraFieldLength + 1);
-			memcpy(entry->mExtraField, buf + j + offset, entry->mExtraFieldLength);
-			*(entry->mExtraField + entry->mExtraFieldLength) = '\0';
-			offset += entry->mExtraFieldLength;
+		if ( cde->mExtraFieldLength > 0) {
+			cde->mExtraField = malloc(cde->mExtraFieldLength + 1);
+			memcpy(cde->mExtraField, buf + j + offset, cde->mExtraFieldLength);
+			*(cde->mExtraField + cde->mExtraFieldLength) = '\0';
+			offset += cde->mExtraFieldLength;
 		}
-		if ( entry->mFileCommentLength > 0) {
-			entry->mFileComment = malloc(entry->mFileCommentLength + 1);
-			memcpy(entry->mFileComment, buf + j + offset, entry->mFileCommentLength);
-			*(entry->mFileComment + entry->mFileCommentLength) = '\0';
-			offset += entry->mFileCommentLength;
+		if ( cde->mFileCommentLength > 0) {
+			cde->mFileComment = malloc(cde->mFileCommentLength + 1);
+			memcpy(cde->mFileComment, buf + j + offset, cde->mFileCommentLength);
+			*(cde->mFileComment + cde->mFileCommentLength) = '\0';
+			offset += cde->mFileCommentLength;
 		}
-		fprintf(stdout, "read %s\n", entry->mFileName);
+		//fprintf(stdout, "read %s\n", cde->mFileName);
 		j += offset;
+		
+		LocalFileHeader* lfh = &((*(mEOCD.mEntries + i)).mLFH);
+		unsigned char *tmp = malloc(ZIP_LOCAL_FILE_HEADER);
+		lseek(zipFile, cde->mLocalHeaderRelOffset, SEEK_SET);
+		reads = read(zipFile, tmp, (size_t)ZIP_LOCAL_FILE_HEADER);
+		if (reads == (size_t)ZIP_LOCAL_FILE_HEADER) {
+			if (getLongLE(tmp) == ZIP_LFH_SIGNATURE) {
+				lfh->mVersionToExtract = getShortLE(tmp + 0x04);
+				lfh->mGPBitFlag = getShortLE(tmp + 0x06);
+				lfh->mCompressedMethod = getShortLE(tmp + 0x08);
+				lfh->mLastModFileTime = getShortLE(tmp + 0x0a);
+				lfh->mLastModFileDate = getShortLE(tmp + 0x0c);
+				lfh->mCRC32 = getLongLE(tmp + 0x0e);
+				lfh->mCompressedSize = getLongLE(&tmp[0x12]);
+				lfh->mUnCompressedSize = getLongLE(&tmp[0x16]);
+				lfh->mFileNameLength = getShortLE(&tmp[0x1a]);
+				lfh->mExtraFieldLength = getShortLE(&tmp[0x1c]);
+				if(lfh->mFileNameLength > 0) {
+					lfh->mFileName = malloc(lfh->mFileNameLength + 1);
+					reads = read(zipFile, lfh->mFileName, lfh->mFileNameLength);
+					if( reads > 0) {
+						*(lfh->mFileName + lfh->mFileNameLength) = '\0';
+					}
+				}
+				if(lfh->mExtraFieldLength > 0) {
+					lfh->mExtraField = malloc(lfh->mExtraFieldLength + 1);
+					reads = read(zipFile, lfh->mExtraField, lfh->mExtraFieldLength);
+					if( reads > 0) {
+						*(lfh->mExtraField + lfh->mExtraFieldLength) = '\0';
+					}
+				}
+				fprintf(stdout, "flag:%d\t%s\n", lfh->mGPBitFlag, lfh->mFileName);
+			}
+		}
+		free(tmp);
 	}
+
+	extractZip(zipFile, &mEOCD, outputDir);
+
 	fprintf(stdout, "zipParse Finished\n");
 
 bail:
@@ -181,6 +220,66 @@ bail:
 		free(buf);
 	}
 	close(zipFile);
+}
+
+int extractZip(int fd, EndOfCentralDir *mEOCD, const char *outputDir) {
+	// prepair to extract data.
+	struct stat buf;
+	if(stat(outputDir, &buf) < 0) {
+		fprintf(stderr, "could not read %s state\n", outputDir);
+		return -1;
+	}
+	if(!S_ISDIR(buf.st_mode)) {
+		fprintf(stderr, "%s is not a dir\n", outputDir);
+		return -1;
+	}
+	if(access(outputDir, W_OK) < 0) {
+		fprintf(stderr, "%s do not has write permission.\n", outputDir);
+		return -1;
+	}
+	fprintf(stdout, "start to extract files\n");
+	// "tmp" just use it as target dir name, 1 for '/', 3 for tmp, 1 for '/', and 1 for '0'
+	int len = strlen(outputDir);
+	printf("%s length:%d\n", outputDir, len);
+	char * destDir = malloc(strlen(outputDir) + 1 + 3 + 1 + 1);
+	if(NULL == destDir) {
+		fprintf(stderr, "memory alloc error\n");
+		return -1;
+	}
+	strcpy(destDir, outputDir);
+	*(destDir + len) = '/';
+	*(destDir + len + 1) = 't';
+	*(destDir + len + 2) = 'm';
+	*(destDir + len + 3) = 'p';
+	*(destDir + len + 4) = '/';
+	*(destDir + len + 5) = '\0';
+
+	if(mkdir(destDir, S_IRUSR|S_IWUSR|S_IXUSR | S_IRGRP | S_IWGRP| S_IROTH)< 0) {
+		fprintf(stderr, "can not mkdir %s:%s\n", destDir, strerror(errno));
+		goto bad;
+	}
+	//save current work path, then restore it. I think 100 length is enough.
+	char curPath[100];
+	getcwd(curPath, 100);
+	printf("curPath: %s\n", curPath);
+	if(chdir(destDir) < 0) {
+		fprintf(stderr, "chdir error:%s\n", strerror(errno));
+		goto bad;
+	}
+	int i;
+	for( i = 0 ; i < mEOCD->mTotalNumEntries; i++) {
+		ZipEntry *entry = mEOCD->mEntries + i;
+		//try to deflate data. from fp to fp.
+	}
+	if(chdir(curPath) < 0) {
+		fprintf(stderr, "chdir error:%s\n", strerror(errno));
+		goto bad;
+	}
+bad:
+	if(NULL != destDir) {
+		free(destDir);
+	}
+	return 0;
 }
 
 int readEndOfCentralDir(EndOfCentralDir* eocd, unsigned const char * buf, int length) {
@@ -200,6 +299,15 @@ int readEndOfCentralDir(EndOfCentralDir* eocd, unsigned const char * buf, int le
 	return 0;
 }
 
+void destroyLocalFileHeader(LocalFileHeader *lfh) {
+	if(NULL != lfh->mFileName) {
+		free(lfh->mFileName);
+	}
+	if(NULL != lfh->mExtraField) {
+		free(lfh->mExtraField);
+	}
+}
+
 void destroyCentralDirEntry(CentralDirEntry *cde) {
 	if (NULL != cde->mFileName) {
 		free(cde->mFileName);
@@ -214,11 +322,17 @@ void destroyCentralDirEntry(CentralDirEntry *cde) {
 	}
 }
 
+void destroyZipEntry(ZipEntry *entry) {
+	destroyCentralDirEntry(&(entry->mCDE));
+	destroyLocalFileHeader(&(entry->mLFH));
+}
+
 void destroyEndOfCentralDir(EndOfCentralDir *eocd) {
 	if ( NULL != eocd->mEntries) {
 		int i;
 		for( i = eocd->mNumEntries -1 ; i >=0 ; i--) {
-			destroyCentralDirEntry(eocd->mEntries + i);
+			destroyZipEntry(eocd->mEntries + i);
+			//destroyCentralDirEntry(eocd->mEntries + i);
 		}
 		free(eocd->mEntries);
 	}

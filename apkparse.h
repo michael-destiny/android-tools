@@ -9,13 +9,33 @@
 
 static long ZIP_END_OF_CENTEN_DIRECTORY_SEARCH = ZIP_END_OF_CENTEN_DIRECTORY + 65535;
 
+#define ZIP_LOCAL_FILE_HEADER			30
+
 #define ZIP_END_OF_CENTEN_DIRECTORY_SIGN				0x06054b50
 
 typedef struct {
 	char		*fileName;
-	char		*outputFile;
-	char		*inputFile;
+	char		*outputDir;
 } apkFile;
+
+typedef struct {
+	unsigned short		mVersionToExtract;
+	unsigned short		mGPBitFlag;
+	unsigned short		mCompressedMethod;
+	unsigned short		mLastModFileTime;
+	unsigned short		mLastModFileDate;
+	unsigned long		mCRC32;
+	unsigned long		mCompressedSize;
+	unsigned long		mUnCompressedSize;
+	unsigned short		mFileNameLength;
+	unsigned short		mExtraFieldLength;
+	unsigned char*		mFileName;
+	unsigned char*		mExtraField;
+
+	enum {
+		ZIP_LFH_SIGNATURE =					0x04034b50
+	};
+} LocalFileHeader;
 
 typedef struct {
 	unsigned short mVersionMadeBy;
@@ -45,6 +65,11 @@ typedef struct {
 } CentralDirEntry;
 
 typedef struct {
+	CentralDirEntry mCDE;
+	LocalFileHeader mLFH;
+} ZipEntry;
+
+typedef struct {
 	unsigned short mDiskNumber;
 	unsigned short mDiskWithCentralDir;
 	unsigned short mNumEntries;
@@ -53,7 +78,7 @@ typedef struct {
 	unsigned long	mCentralDirOffset;
 	unsigned short	mCommentLen;
 	unsigned char * mComment;
-	CentralDirEntry* mEntries;
+	ZipEntry* mEntries;
 
 	enum {
 		ZIP_EOCD_SIGNATURE			=		0x06054b50
@@ -61,7 +86,10 @@ typedef struct {
 } EndOfCentralDir;
 
 void 
-openZip(const char* zipFileName);
+openZip(const char* zipFileName, const char *outputDir);
+
+int
+extractZip(int fd, EndOfCentralDir *eocd, const char *outputDir);
 
 int
 readEndOfCentralDir(EndOfCentralDir* eocd, unsigned const char * buf, int length);
@@ -69,7 +97,11 @@ readEndOfCentralDir(EndOfCentralDir* eocd, unsigned const char * buf, int length
 int 
 readCentralDirEntry(CentralDirEntry * cde, unsigned const char * buf, int length);
 
+void destroyLocalFileHeader(LocalFileHeader *head);
+
 void destroyCentralDirEntry(CentralDirEntry * cde);
+
+void destroyZipEntry(ZipEntry* entry);
 
 void destroyEndOfCentralDir(EndOfCentralDir* eocd);
 
@@ -87,4 +119,5 @@ static inline unsigned long getLongLE(unsigned const char *buf) {
 static inline off_t tell(int fd) {
 	return lseek(fd, 0, SEEK_CUR);
 }
+
 #endif
