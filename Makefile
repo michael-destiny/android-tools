@@ -1,11 +1,11 @@
 bat: main.o 
 	rm -rf tmp
-	gcc -o parseTool main.c zipparser.c
+	gcc -lz -o parseTool main.o zipparser.o
 
-main.o : main.c zipparser.o
+main.o : main.c zipparser.o apkparse.h
 	gcc -c main.c
 
-zipparser.o : zipparser.c
+zipparser.o : zipparser.c apkparse.h
 	gcc -c zipparser.c
 
 clean: 

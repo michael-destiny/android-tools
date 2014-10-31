@@ -91,6 +91,9 @@ openZip(const char* zipFileName, const char *outputDir);
 int
 extractZip(int fd, EndOfCentralDir *eocd, const char *outputDir);
 
+void
+inflateToFile(int fd, ZipEntry *entry);
+
 int
 readEndOfCentralDir(EndOfCentralDir* eocd, unsigned const char * buf, int length);
 

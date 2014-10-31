@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <zlib.h>
 
 void openZip(const char *zipFileName, const char *outputDir) {
 	//printf("start openZip\n");
@@ -270,6 +271,8 @@ int extractZip(int fd, EndOfCentralDir *mEOCD, const char *outputDir) {
 	for( i = 0 ; i < mEOCD->mTotalNumEntries; i++) {
 		ZipEntry *entry = mEOCD->mEntries + i;
 		//try to deflate data. from fp to fp.
+		inflateToFile(fd, entry);
+
 	}
 	if(chdir(curPath) < 0) {
 		fprintf(stderr, "chdir error:%s\n", strerror(errno));
@@ -280,6 +283,55 @@ bad:
 		free(destDir);
 	}
 	return 0;
+}
+
+void inflateToFile(int fd, ZipEntry *entry) {
+	static const unsigned long kReadBufSize = 32768;
+
+	unsigned char buf[kReadBufSize];
+
+	unsigned long compRemaining = (*entry).mLFH.mCompressedSize;
+	//try create file and if it existed, truncate it.
+	int destFd = open((char *)(*entry).mLFH.mFileName, O_RDWR, O_CREAT| O_TRUNC);
+	if(destFd <= -1) {
+		fprintf(stderr, "open destFile error %s\n", strerror(errno));
+		return ;
+	}
+	int zerr;
+	z_stream zstream;
+	zstream.zalloc = Z_NULL;
+	zstream.zfree = Z_NULL;
+	zstream.opaque = Z_NULL;
+	zstream.next_in = NULL;
+	zstream.avail_in = 0;
+	zstream.next_out = (Bytef*)buf;
+	zstream.avail_out = (*entry).mLFH.mUnCompressedSize;
+	zstream.data_type = Z_UNKNOWN;
+
+	zerr = inflateInit2_(&zstream, -MAX_WBITS,ZLIB_VERSION, (int)sizeof(z_stream));
+	if (zerr != Z_OK) {
+		if (zerr == Z_VERSION_ERROR) {
+			fprintf(stderr, "installed zlib is not compatible with linked version (%s)\n", ZLIB_VERSION);
+			return ;
+		} else {
+			fprintf(stderr, "Call to infalteInit2 failed (zerr=%d)\n", zerr);
+		}
+	}
+
+	long startPos = (*entry).mCDE.mLocalHeaderRelOffset + (ZIP_LOCAL_FILE_HEADER)
+	   	+ (*entry).mLFH.mFileNameLength + (*entry).mLFH.mExtraFieldLength;
+
+	do {
+		unsigned long getSize;
+
+		if (zstream.avail_in == 0) {
+			getSize = (compRemaining > kReadBufSize) ? kReadBufSize : compRemaining;
+			fprintf(stdout, "+++ reading %ld bytes (%ld left)\n",
+					getSize, compRemaining);
+			unsigned char* nextBuffer = malloc(getSize);
+			free(nextBuffer);
+		}
+	} while (zerr == Z_OK);
 }
 
 int readEndOfCentralDir(EndOfCentralDir* eocd, unsigned const char * buf, int length) {
