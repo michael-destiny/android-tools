@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <zlib.h>
+#include <sys/mman.h>
 
 void openZip(const char *zipFileName, const char *outputDir) {
 	//printf("start openZip\n");
@@ -223,6 +224,20 @@ bail:
 	close(zipFile);
 }
 
+void createParentDir(unsigned const char *path) {
+	//first char should never be /
+	char destPath[200];
+	int firstLoc = 0;
+	int i = 0;
+	for( ; *(path + i) != '\0'; i++) {
+		if(*(path +i) == '/') {
+			destPath[i] = '\0';
+			mkdir(destPath, DIR_MODE);
+		}
+		destPath[i] = *(path + i);
+	}
+}
+
 int extractZip(int fd, EndOfCentralDir *mEOCD, const char *outputDir) {
 	// prepair to extract data.
 	struct stat buf;
@@ -270,6 +285,7 @@ int extractZip(int fd, EndOfCentralDir *mEOCD, const char *outputDir) {
 	int i;
 	for( i = 0 ; i < mEOCD->mTotalNumEntries; i++) {
 		ZipEntry *entry = mEOCD->mEntries + i;
+		createParentDir((*entry).mLFH.mFileName);
 		//try to deflate data. from fp to fp.
 		inflateToFile(fd, entry);
 
@@ -292,11 +308,49 @@ void inflateToFile(int fd, ZipEntry *entry) {
 
 	unsigned long compRemaining = (*entry).mLFH.mCompressedSize;
 	//try create file and if it existed, truncate it.
-	int destFd = open((char *)(*entry).mLFH.mFileName, O_RDWR, O_CREAT| O_TRUNC);
+		int destFd = open((char *)(*entry).mLFH.mFileName, O_RDWR | O_CREAT| O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if(destFd <= -1) {
-		fprintf(stderr, "open destFile error %s\n", strerror(errno));
+		fprintf(stderr, "open %s error %s\n", (char *)(*entry).mLFH.mFileName, strerror(errno));
 		return ;
 	}
+	int remain = (*entry).mLFH.mUnCompressedSize;
+	memset(buf,0, kReadBufSize);
+	
+	do {
+		int len = write(destFd, buf, remain > kReadBufSize? kReadBufSize: remain);
+		if(len > 0) {
+			remain -= len;
+		}
+	} while(remain > 0);
+	//fprintf(stdout, "memset 0 in %s, GPBFlag=%d, compressType:%d\n", (char *)(*entry).mLFH.mFileName, (*entry).mLFH.mGPBitFlag, (*entry).mLFH.mCompressedMethod);
+	
+	//rewind the fd.
+	lseek(destFd, 0, SEEK_SET);
+
+	long startPos = (*entry).mCDE.mLocalHeaderRelOffset + (ZIP_LOCAL_FILE_HEADER)
+	   	+ (*entry).mLFH.mFileNameLength + (*entry).mLFH.mExtraFieldLength;
+	lseek(fd, startPos, SEEK_SET);
+	fprintf(stdout, "start read from %ld\n", startPos);
+
+	if((*entry).mLFH.mCompressedMethod == kCompressStored) {
+		unsigned long getSize;
+		do {
+			getSize = (compRemaining > kReadBufSize) ? kReadBufSize : compRemaining;
+			//fprintf(stdout, "+++ reading %ld bytes (%ld left)\n",
+			//		getSize, compRemaining);
+			int cc = read(fd, buf, getSize);
+			int len = write(destFd, buf, cc);
+			if( len != cc) {
+				fprintf(stderr, "write file error\n");
+				goto bad;
+			}
+			compRemaining -= cc;
+		}while(compRemaining > 0);
+		goto bad;
+	}
+
+	char *addr = mmap(NULL, (*entry).mLFH.mUnCompressedSize,PROT_WRITE, MAP_PRIVATE, destFd, 0);
+
 	int zerr;
 	z_stream zstream;
 	zstream.zalloc = Z_NULL;
@@ -304,22 +358,19 @@ void inflateToFile(int fd, ZipEntry *entry) {
 	zstream.opaque = Z_NULL;
 	zstream.next_in = NULL;
 	zstream.avail_in = 0;
-	zstream.next_out = (Bytef*)buf;
+	zstream.next_out = (Bytef*)addr;
 	zstream.avail_out = (*entry).mLFH.mUnCompressedSize;
 	zstream.data_type = Z_UNKNOWN;
 
-	zerr = inflateInit2_(&zstream, -MAX_WBITS,ZLIB_VERSION, (int)sizeof(z_stream));
+	zerr = inflateInit2(&zstream, -MAX_WBITS);
 	if (zerr != Z_OK) {
 		if (zerr == Z_VERSION_ERROR) {
 			fprintf(stderr, "installed zlib is not compatible with linked version (%s)\n", ZLIB_VERSION);
-			return ;
+			goto bad;
 		} else {
 			fprintf(stderr, "Call to infalteInit2 failed (zerr=%d)\n", zerr);
 		}
 	}
-
-	long startPos = (*entry).mCDE.mLocalHeaderRelOffset + (ZIP_LOCAL_FILE_HEADER)
-	   	+ (*entry).mLFH.mFileNameLength + (*entry).mLFH.mExtraFieldLength;
 
 	do {
 		unsigned long getSize;
@@ -328,10 +379,31 @@ void inflateToFile(int fd, ZipEntry *entry) {
 			getSize = (compRemaining > kReadBufSize) ? kReadBufSize : compRemaining;
 			fprintf(stdout, "+++ reading %ld bytes (%ld left)\n",
 					getSize, compRemaining);
-			unsigned char* nextBuffer = malloc(getSize);
-			free(nextBuffer);
+			int cc = read(fd, buf, getSize);
+			if(cc != (int)getSize) {
+				fprintf(stderr, "read buf error\n");
+				goto z_bad;
+			}
+			compRemaining -= getSize;
+			zstream.next_in = buf;
+			zstream.avail_in = getSize;
+		}
+
+		/* uncompress the data */
+		zerr = inflate(&zstream, Z_NO_FLUSH);
+		if(zerr != Z_OK && zerr != Z_STREAM_END) {
+			fprintf(stdout, "zlib inflate call failed(zerr = %d)\n", zerr);
+			goto z_bad;
 		}
 	} while (zerr == Z_OK);
+	if((long) zstream.total_out != (*entry).mLFH.mUnCompressedSize) {
+		fprintf(stderr, "size mismatch on inflate file (%ld vs %ld)\n",(long)zstream.total_out, (*entry).mLFH.mUnCompressedSize);
+	}
+z_bad:
+	inflateEnd(&zstream);
+bad:
+	munmap(addr, (*entry).mLFH.mUnCompressedSize);
+	close(destFd);
 }
 
 int readEndOfCentralDir(EndOfCentralDir* eocd, unsigned const char * buf, int length) {

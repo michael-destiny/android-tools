@@ -3,6 +3,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+#define FILE_MODE       (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+
+#define DIR_MODE        (FILE_MODE | S_IXUSR | S_IXGRP | S_IXOTH)
+
 #define ZIP_END_OF_CENTEN_DIRECTORY		22
 // if you use #define, it would just regard it as int.
 //#define ZIP_END_OF_CENTEN_DIRECTORY_SEARCH	(long)ZIP_END_OF_CENTEN_DIRECTORY + 65535
@@ -12,6 +16,14 @@ static long ZIP_END_OF_CENTEN_DIRECTORY_SEARCH = ZIP_END_OF_CENTEN_DIRECTORY + 6
 #define ZIP_LOCAL_FILE_HEADER			30
 
 #define ZIP_END_OF_CENTEN_DIRECTORY_SIGN				0x06054b50
+
+enum {
+	kCompressStored				=		0,				//no compression
+	//shrunk					=		1,
+	//...
+	kCompressDeflated			=		8,				// standard deflate.
+	//...a			
+};
 
 typedef struct {
 	char		*fileName;
